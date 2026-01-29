@@ -480,12 +480,17 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
         
-        let chat = SecureChat::new(None);
-        chat.create_account(&db_path, "password123", "Test User").await.unwrap();
+        // Create account and drop the instance to release the database lock
+        {
+            let chat = SecureChat::new(None);
+            chat.create_account(&db_path, "password123", "Test User").await.unwrap();
+        }
         
-        // Unlock should work
-        let chat2 = SecureChat::new(None);
-        chat2.unlock_account(&db_path, "password123").await.unwrap();
+        // Unlock should work now that the database is closed
+        {
+            let chat2 = SecureChat::new(None);
+            chat2.unlock_account(&db_path, "password123").await.unwrap();
+        }
         
         // Wrong password should fail
         let chat3 = SecureChat::new(None);
