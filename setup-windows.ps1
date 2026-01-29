@@ -18,6 +18,76 @@ if (-not (Test-Path "core\Cargo.toml")) {
     exit 1
 }
 
+# Function to check and install C compiler
+function Install-CCompiler {
+    $cl = Get-Command cl -ErrorAction SilentlyContinue
+    $gcc = Get-Command gcc -ErrorAction SilentlyContinue
+    
+    if ($cl) {
+        Write-Status "MSVC compiler (cl) found"
+        return $true
+    }
+    
+    if ($gcc) {
+        Write-Status "GCC compiler found"
+        Write-Status "Switching Rust to GNU toolchain..."
+        rustup default stable-x86_64-pc-windows-gnu 2>$null
+        rustup target add x86_64-pc-windows-gnu 2>$null
+        return $true
+    }
+    
+    Write-Warning "No C compiler found!"
+    Write-Host ""
+    Write-Host "You MUST install a C compiler to build SecureChat."
+    Write-Host ""
+    Write-Host "Option 1: MinGW (Recommended - 200MB, fast install)"
+    Write-Host "  1. Download from: https://winlibs.com/"
+    Write-Host "  2. Extract to C:\mingw64"
+    Write-Host "  3. Add C:\mingw64\bin to your PATH"
+    Write-Host "  4. Restart this terminal and run again"
+    Write-Host ""
+    Write-Host "Option 2: Visual Studio Build Tools (6GB)"
+    Write-Host "  1. Download from: https://visualstudio.microsoft.com/visual-cpp-build-tools/"
+    Write-Host "  2. Select Desktop development with C++"
+    Write-Host "  3. Install and restart"
+    Write-Host ""
+    Write-Host "Option 3: Auto-install MinGW via Chocolatey"
+    
+    $choice = Read-Host "Install via Chocolatey now? (y/n)"
+    
+    if ($choice -eq "y" -or $choice -eq "Y") {
+        # Check for Chocolatey
+        $choco = Get-Command choco -ErrorAction SilentlyContinue
+        if (-not $choco) {
+            Write-Status "Installing Chocolatey..."
+            Set-ExecutionPolicy Bypass -Scope Process -Force
+            [System.Net.ServicePointManager]::SecurityProtocol = 3072
+            Invoke-Expression ((New-Object Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+            $env:PATH = [Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" + [Environment]::GetEnvironmentVariable("PATH", "User")
+        }
+        
+        Write-Status "Installing MinGW..."
+        choco install mingw -y
+        
+        if ($LASTEXITCODE -eq 0) {
+            # Refresh PATH
+            $env:PATH = [Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" + [Environment]::GetEnvironmentVariable("PATH", "User")
+            
+            # Verify
+            $gcc = Get-Command gcc -ErrorAction SilentlyContinue
+            if ($gcc) {
+                Write-Status "MinGW installed successfully!"
+                Write-Status "Switching Rust to GNU toolchain..."
+                rustup default stable-x86_64-pc-windows-gnu
+                rustup target add x86_64-pc-windows-gnu
+                return $true
+            }
+        }
+    }
+    
+    return $false
+}
+
 # Function to install dependencies
 function Install-Dependencies {
     Write-Status "Checking dependencies..."
@@ -34,45 +104,10 @@ function Install-Dependencies {
         Write-Status "Rust found: $(rustc --version)"
     }
     
-    # Check for C compiler
-    $cl = Get-Command cl -ErrorAction SilentlyContinue
-    $gcc = Get-Command gcc -ErrorAction SilentlyContinue
-    
-    if (-not $cl -and -not $gcc) {
-        Write-Warning "No C compiler found!"
-        Write-Host ""
-        Write-Host "Choose an option:"
-        Write-Host "1. Install Visual Studio Build Tools (Recommended)"
-        Write-Host "2. Install MinGW-w64 (Smaller)"
-        Write-Host "3. Skip - I will install manually"
-        Write-Host ""
-        
-        $choice = Read-Host "Enter choice (1-3)"
-        
-        if ($choice -eq "1") {
-            Write-Status "Downloading Visual Studio Build Tools..."
-            $vsPath = "$env:TEMP\vs_BuildTools.exe"
-            Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_BuildTools.exe" -OutFile $vsPath
-            & $vsPath --quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended
-            Write-Status "Please restart your terminal after installation"
-            exit 0
-        }
-        elseif ($choice -eq "2") {
-            Write-Status "Installing MinGW via Chocolatey..."
-            $choco = Get-Command choco -ErrorAction SilentlyContinue
-            if (-not $choco) {
-                Set-ExecutionPolicy Bypass -Scope Process -Force
-                [System.Net.ServicePointManager]::SecurityProtocol = 3072
-                Invoke-Expression ((New-Object Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-            }
-            choco install mingw -y
-            rustup default stable-x86_64-pc-windows-gnu
-            rustup target add x86_64-pc-windows-gnu
-            Write-Status "MinGW installed! Please restart your terminal."
-        }
-    } else {
-        if ($cl) { Write-Status "MSVC compiler found" }
-        if ($gcc) { Write-Status "GCC found" }
+    # Check for C compiler - REQUIRED
+    if (-not (Install-CCompiler)) {
+        Write-Error "C compiler is required. Please install one and try again."
+        exit 1
     }
     
     # Check Node.js
@@ -83,36 +118,46 @@ function Install-Dependencies {
         Invoke-WebRequest -Uri "https://nodejs.org/dist/v20.11.0/node-v20.11.0-x64.msi" -OutFile $nodePath
         Start-Process msiexec.exe -ArgumentList "/i", $nodePath, "/quiet", "/norestart" -Wait
         $env:PATH = [Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" + [Environment]::GetEnvironmentVariable("PATH", "User")
+        Write-Status "Node.js installed"
     } else {
         Write-Status "Node.js found: $(node --version)"
     }
     
-    Write-Host "`nAll dependencies installed!" -ForegroundColor Green
+    Write-Host "`nAll dependencies ready!" -ForegroundColor Green
 }
 
 # Function to build the project
 function Build-Project {
-    Write-Status "Building SecureChat..."
-    
-    # Determine which toolchain to use
-    $gcc = Get-Command gcc -ErrorAction SilentlyContinue
+    # First check if we have a C compiler
     $cl = Get-Command cl -ErrorAction SilentlyContinue
+    $gcc = Get-Command gcc -ErrorAction SilentlyContinue
+    
+    if (-not $cl -and -not $gcc) {
+        Write-Error "No C compiler found! Cannot build."
+        Write-Host "Run with -InstallDeps first, or install MinGW/Visual Studio manually."
+        return
+    }
     
     if ($gcc -and -not $cl) {
-        Write-Status "Using GNU toolchain"
+        Write-Status "Using GNU toolchain (MinGW)"
         rustup default stable-x86_64-pc-windows-gnu 2>$null
+    } else {
+        Write-Status "Using MSVC toolchain"
     }
+    
+    Write-Status "Building SecureChat..."
     
     # Build core
     Write-Status "Building core library..."
     Set-Location core
     cargo build --release
-    if ($LASTEXITCODE -ne 0) {
+    $coreResult = $LASTEXITCODE
+    Set-Location ..
+    
+    if ($coreResult -ne 0) {
         Write-Error "Core build failed!"
-        Set-Location ..
         return
     }
-    Set-Location ..
     Write-Status "Core built successfully!"
     
     # Build desktop
@@ -136,12 +181,11 @@ function Build-Project {
 if ($InstallDeps) {
     Install-Dependencies
 }
-
-if ($BuildOnly -or -not $InstallDeps) {
+elseif ($BuildOnly) {
     Build-Project
 }
-
-if (-not $InstallDeps -and -not $BuildOnly) {
+else {
+    # Default: check deps then build
     Install-Dependencies
     Build-Project
 }
