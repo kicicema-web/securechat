@@ -8,9 +8,8 @@ use argon2::{
 };
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey, Signature};
 use hkdf::Hkdf;
-use rand::rngs::StdRng;
-use rand::SeedableRng;
-use sha2::{Digest, Sha256};
+use rand::RngCore as RandRngCore;
+use sha2::Sha256;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey};
 use serde::{Serialize, Deserialize};
 use anyhow::{Result, Context};
@@ -39,10 +38,19 @@ pub struct EncryptedIdentityKeys {
 }
 
 /// Message encryption keys (X25519)
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MessageKeyPair {
     pub public_key: X25519PublicKey,
     secret_key: X25519SecretKey,
+}
+
+impl std::fmt::Debug for MessageKeyPair {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MessageKeyPair")
+            .field("public_key", &self.public_key)
+            .field("secret_key", &"[REDACTED]")
+            .finish()
+    }
 }
 
 /// Encrypted message structure
@@ -73,9 +81,11 @@ impl MasterKey {
         
         // Derive key using Argon2id
         let argon2 = Argon2::default();
+        let salt_string = SaltString::encode_b64(&salt)
+            .map_err(|e| anyhow::anyhow!("Failed to encode salt: {:?}", e))?;
         let password_hash = argon2
-            .hash_password(password.as_bytes(), &SaltString::encode_b64(&salt)?)
-            .context("Failed to hash password")?;
+            .hash_password(password.as_bytes(), &salt_string)
+            .map_err(|e| anyhow::anyhow!("Failed to hash password: {:?}", e))?;
         
         let mut derived_key = [0u8; 32];
         let _ = password_hash.hash
@@ -88,7 +98,7 @@ impl MasterKey {
         let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&derived_key));
         let encrypted_key = cipher
             .encrypt(Nonce::from_slice(&nonce), master_key.as_ref())
-            .context("Failed to encrypt master key")?;
+            .map_err(|e| anyhow::anyhow!("Failed to encrypt master key: {:?}", e))?;
         
         Ok((Self {
             encrypted_key,
@@ -101,10 +111,11 @@ impl MasterKey {
     pub fn unlock(&self, password: &str) -> Result<[u8; 32]> {
         // Re-derive key from password
         let argon2 = Argon2::default();
-        let salt_string = SaltString::encode_b64(&self.salt)?;
+        let salt_string = SaltString::encode_b64(&self.salt)
+            .map_err(|e| anyhow::anyhow!("Failed to encode salt: {:?}", e))?;
         let password_hash = argon2
             .hash_password(password.as_bytes(), &salt_string)
-            .context("Failed to hash password")?;
+            .map_err(|e| anyhow::anyhow!("Failed to hash password: {:?}", e))?;
         
         let mut derived_key = [0u8; 32];
         if let Some(hash) = password_hash.hash {
@@ -115,7 +126,7 @@ impl MasterKey {
         let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&derived_key));
         let decrypted = cipher
             .decrypt(Nonce::from_slice(&self.nonce), self.encrypted_key.as_ref())
-            .context("Failed to decrypt master key - wrong password?")?;
+            .map_err(|e| anyhow::anyhow!("Failed to decrypt master key - wrong password?: {:?}", e))?;
         
         let mut master_key = [0u8; 32];
         master_key.copy_from_slice(&decrypted);
@@ -123,13 +134,13 @@ impl MasterKey {
         Ok(master_key)
     }
     
-    fn generate_random_bytes(rng: &mut impl RngCore) -> [u8; 32] {
+    pub fn generate_random_bytes(rng: &mut impl RandRngCore) -> [u8; 32] {
         let mut bytes = [0u8; 32];
         rng.fill_bytes(&mut bytes);
         bytes
     }
     
-    fn generate_random_bytes_12(rng: &mut impl RngCore) -> [u8; 12] {
+    fn generate_random_bytes_12(rng: &mut impl RandRngCore) -> [u8; 12] {
         let mut bytes = [0u8; 12];
         rng.fill_bytes(&mut bytes);
         bytes
@@ -138,7 +149,7 @@ impl MasterKey {
 
 impl IdentityKeyPair {
     /// Generate new identity key pair
-    pub fn generate(rng: &mut impl RngCore) -> Self {
+    pub fn generate(rng: &mut impl rand_core::CryptoRngCore) -> Self {
         let signing_key = SigningKey::generate(rng);
         let verifying_key = signing_key.verifying_key();
         
@@ -167,7 +178,7 @@ impl IdentityKeyPair {
         let secret_bytes = self.secret_key.to_bytes();
         let encrypted_secret = cipher
             .encrypt(Nonce::from_slice(&nonce), secret_bytes.as_ref())
-            .context("Failed to encrypt secret key")?;
+            .map_err(|e| anyhow::anyhow!("Failed to encrypt secret key: {:?}", e))?;
         
         Ok(EncryptedIdentityKeys {
             public_key: self.public_key.to_bytes(),
@@ -181,7 +192,7 @@ impl IdentityKeyPair {
         let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(master_key));
         let decrypted = cipher
             .decrypt(Nonce::from_slice(&encrypted.nonce), encrypted.encrypted_secret.as_ref())
-            .context("Failed to decrypt identity keys")?;
+            .map_err(|e| anyhow::anyhow!("Failed to decrypt identity keys: {:?}", e))?;
         
         let mut secret_bytes = [0u8; 32];
         secret_bytes.copy_from_slice(&decrypted);
@@ -195,7 +206,7 @@ impl IdentityKeyPair {
         })
     }
     
-    fn generate_random_bytes_12(rng: &mut impl RngCore) -> [u8; 12] {
+    fn generate_random_bytes_12(rng: &mut impl RandRngCore) -> [u8; 12] {
         let mut bytes = [0u8; 12];
         rng.fill_bytes(&mut bytes);
         bytes
@@ -230,16 +241,19 @@ impl MessageKeyPair {
         
         // Derive shared secret using HKDF
         let mut shared_secret = [0u8; 32];
-        let hk = Hkdf::<Sha256>::new(None, &[dh1.as_bytes(), dh2.as_bytes()].concat());
+        let mut dh_bytes = Vec::with_capacity(64);
+        dh_bytes.extend_from_slice(dh1.as_bytes());
+        dh_bytes.extend_from_slice(dh2.as_bytes());
+        let hk = Hkdf::<Sha256>::new(None, &dh_bytes);
         hk.expand(b"SecureChat-v1", &mut shared_secret)
-            .context("HKDF expand failed")?;
+            .map_err(|e| anyhow::anyhow!("HKDF expand failed: {:?}", e))?;
         
         // Encrypt message
         let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&shared_secret));
         let nonce = Aes256Gcm::generate_nonce(OsRng);
         let ciphertext = cipher
             .encrypt(&nonce, message)
-            .context("Encryption failed")?;
+            .map_err(|e| anyhow::anyhow!("Encryption failed: {:?}", e))?;
         
         Ok(EncryptedMessage {
             ciphertext,
@@ -264,15 +278,18 @@ impl MessageKeyPair {
         
         // Derive shared secret
         let mut shared_secret = [0u8; 32];
-        let hk = Hkdf::<Sha256>::new(None, &[dh1.as_bytes(), dh2.as_bytes()].concat());
+        let mut dh_bytes = Vec::with_capacity(64);
+        dh_bytes.extend_from_slice(dh1.as_bytes());
+        dh_bytes.extend_from_slice(dh2.as_bytes());
+        let hk = Hkdf::<Sha256>::new(None, &dh_bytes);
         hk.expand(b"SecureChat-v1", &mut shared_secret)
-            .context("HKDF expand failed")?;
+            .map_err(|e| anyhow::anyhow!("HKDF expand failed: {:?}", e))?;
         
         // Decrypt message
         let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&shared_secret));
         let plaintext = cipher
             .decrypt(Nonce::from_slice(&encrypted.nonce), encrypted.ciphertext.as_ref())
-            .context("Decryption failed - wrong key or tampered message")?;
+            .map_err(|e| anyhow::anyhow!("Decryption failed - wrong key or tampered message: {:?}", e))?;
         
         Ok(plaintext)
     }
@@ -296,15 +313,15 @@ impl DoubleRatchet {
         let hk = Hkdf::<Sha256>::new(None, &self.root_key);
         let mut new_root = [0u8; 32];
         hk.expand(b"ratchet-root", &mut new_root)
-            .context("Ratchet root derivation failed")?;
+            .map_err(|e| anyhow::anyhow!("Ratchet root derivation failed: {:?}", e))?;
         
         let mut sending = [0u8; 32];
         hk.expand(b"ratchet-send", &mut sending)
-            .context("Ratchet send derivation failed")?;
+            .map_err(|e| anyhow::anyhow!("Ratchet send derivation failed: {:?}", e))?;
         
         let mut receiving = [0u8; 32];
         hk.expand(b"ratchet-recv", &mut receiving)
-            .context("Ratchet recv derivation failed")?;
+            .map_err(|e| anyhow::anyhow!("Ratchet recv derivation failed: {:?}", e))?;
         
         self.root_key = new_root;
         self.sending_chain_key = Some(sending);
@@ -322,7 +339,7 @@ pub fn hash_password(password: &str) -> Result<String> {
     let argon2 = Argon2::default();
     let password_hash = argon2
         .hash_password(password.as_bytes(), &salt)
-        .context("Failed to hash password")?;
+        .map_err(|e| anyhow::anyhow!("Failed to hash password: {:?}", e))?;
     
     Ok(password_hash.to_string())
 }
@@ -330,7 +347,7 @@ pub fn hash_password(password: &str) -> Result<String> {
 /// Verify a password against a hash
 pub fn verify_password(password: &str, hash: &str) -> Result<bool> {
     let parsed_hash = PasswordHash::new(hash)
-        .context("Invalid password hash format")?;
+        .map_err(|e| anyhow::anyhow!("Invalid password hash format: {:?}", e))?;
     
     let argon2 = Argon2::default();
     Ok(argon2.verify_password(password.as_bytes(), &parsed_hash).is_ok())

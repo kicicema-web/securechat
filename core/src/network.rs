@@ -1,20 +1,14 @@
-use async_std::stream::StreamExt;
 use futures::channel::mpsc;
-use futures::SinkExt;
+use futures::{SinkExt, StreamExt};
 use libp2p::{
-    core::{muxing::StreamMuxerBox, transport::Boxed, upgrade},
     gossipsub::{self, IdentTopic, MessageAuthenticity},
     identity::Keypair,
-    mdns,
     noise,
-    swarm::{NetworkBehaviour, SwarmBuilder, SwarmEvent},
-    PeerId, Transport,
-    tcp, tls, quic,
+    swarm::{NetworkBehaviour, SwarmEvent},
+    PeerId, SwarmBuilder,
 };
 use anyhow::{Result, Context};
-use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Duration;
 
 use crate::protocol::ProtocolMessage;
@@ -73,7 +67,6 @@ impl Default for NetworkConfig {
 #[derive(NetworkBehaviour)]
 struct SecureChatBehaviour {
     gossipsub: gossipsub::Behaviour,
-    mdns: mdns::Behaviour,
 }
 
 /// P2P Network manager
@@ -127,14 +120,43 @@ impl NetworkManager {
     
     /// Start the network event loop
     pub async fn run(mut self) -> Result<()> {
-        // Build transport
-        let transport = self.build_transport().await?;
+        // Generate keypair for swarm
+        let local_key = Keypair::generate_ed25519();
+        let local_peer_id = PeerId::from(local_key.public());
         
-        // Build behaviour
-        let behaviour = self.build_behaviour().await?;
-        
-        // Build swarm
-        let mut swarm = SwarmBuilder::with_async_std_executor(transport, behaviour, self.local_peer_id)
+        // Build swarm using new libp2p 0.54+ API
+        let mut swarm = SwarmBuilder::with_existing_identity(local_key)
+            .with_async_std()
+            .with_tcp(
+                libp2p::tcp::Config::default(),
+                noise::Config::new,
+                libp2p::yamux::Config::default,
+            )?
+            .with_quic()
+            .with_behaviour(|keypair| {
+                // Gossipsub configuration
+                let gossipsub_config = gossipsub::ConfigBuilder::default()
+                    .heartbeat_interval(Duration::from_secs(10))
+                    .validation_mode(gossipsub::ValidationMode::Strict)
+                    .mesh_outbound_min(4)
+                    .mesh_n_low(4)
+                    .mesh_n(6)
+                    .mesh_n_high(12)
+                    .gossip_lazy(6)
+                    .history_length(10)
+                    .history_gossip(3)
+                    .build()
+                    .expect("Valid gossipsub config");
+                
+                let gossipsub = gossipsub::Behaviour::new(
+                    MessageAuthenticity::Signed(keypair.clone()),
+                    gossipsub_config,
+                ).expect("Valid gossipsub behaviour");
+                
+                SecureChatBehaviour {
+                    gossipsub,
+                }
+            })?
             .build();
         
         // Subscribe to topic
@@ -150,7 +172,8 @@ impl NetworkManager {
         
         // Dial bootstrap peers
         for addr in &self.config.bootstrap_peers {
-            swarm.dial(addr.parse()?)
+            let multiaddr: libp2p::Multiaddr = addr.parse()?;
+            swarm.dial(multiaddr)
                 .context("Failed to dial bootstrap peer")?;
         }
         
@@ -162,8 +185,12 @@ impl NetworkManager {
                 event = swarm.select_next_some() => {
                     self.handle_swarm_event(&mut swarm, event, &topic).await?;
                 }
-                command = self.command_receiver.select_next_some() => {
-                    if self.handle_command(&mut swarm, command, &topic).await? {
+                command = self.command_receiver.next() => {
+                    if let Some(cmd) = command {
+                        if self.handle_command(&mut swarm, cmd, &topic).await? {
+                            break;
+                        }
+                    } else {
                         break;
                     }
                 }
@@ -172,61 +199,6 @@ impl NetworkManager {
         
         log::info!("Network stopped");
         Ok(())
-    }
-    
-    async fn build_transport(&self) -> Result<Boxed<(PeerId, StreamMuxerBox)>> {
-        let local_key = Keypair::generate_ed25519();
-        
-        let tcp_transport = tcp::async_io::Transport::default()
-            .upgrade(upgrade::Version::V1)
-            .authenticate(noise::Config::new(&local_key)
-                .context("Failed to create noise config")?)
-            .multiplex(libp2p::yamux::Config::default())
-            .timeout(Duration::from_secs(20))
-            .boxed();
-        
-        let quic_transport = quic::async_std::Transport::new(quic::Config::default());
-        
-        let transport = libp2p::core::transport::OrTransport::new(quic_transport, tcp_transport)
-            .map(|either, _| match either {
-                libp2p::core::transport::EitherOutput::First((peer_id, muxer)) => (peer_id, StreamMuxerBox::new(muxer)),
-                libp2p::core::transport::EitherOutput::Second((peer_id, muxer)) => (peer_id, StreamMuxerBox::new(muxer)),
-            })
-            .boxed();
-        
-        Ok(transport)
-    }
-    
-    async fn build_behaviour(&self) -> Result<SecureChatBehaviour> {
-        let local_key = Keypair::generate_ed25519();
-        let local_peer_id = PeerId::from(local_key.public());
-        
-        // Gossipsub configuration
-        let gossipsub_config = gossipsub::ConfigBuilder::default()
-            .heartbeat_interval(Duration::from_secs(10))
-            .validation_mode(gossipsub::ValidationMode::Strict)
-            .mesh_outbound_min(4)
-            .mesh_n_low(4)
-            .mesh_n(6)
-            .mesh_n_high(12)
-            .gossip_lazy(6)
-            .history_length(10)
-            .history_gossip(3)
-            .build()
-            .context("Failed to build gossipsub config")?;
-        
-        let gossipsub = gossipsub::Behaviour::new(
-            MessageAuthenticity::Signed(local_key),
-            gossipsub_config,
-        )?;
-        
-        // mDNS configuration
-        let mdns = mdns::Behaviour::new(mdns::Config::default(), local_peer_id)?;
-        
-        Ok(SecureChatBehaviour {
-            gossipsub,
-            mdns,
-        })
     }
     
     async fn handle_swarm_event(
@@ -250,22 +222,6 @@ impl NetworkManager {
                 self.event_sender.send(NetworkEvent::PeerDisconnected {
                     peer_id: peer_id.to_string(),
                 }).await.ok();
-            }
-            SwarmEvent::Behaviour(SecureChatBehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
-                for (peer_id, multiaddr) in list {
-                    log::info!("Discovered peer {} at {}", peer_id, multiaddr);
-                    swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
-                    self.event_sender.send(NetworkEvent::PeerDiscovered {
-                        peer_id: peer_id.to_string(),
-                        addrs: vec![multiaddr.to_string()],
-                    }).await.ok();
-                }
-            }
-            SwarmEvent::Behaviour(SecureChatBehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
-                for (peer_id, _) in list {
-                    log::info!("Peer expired {}", peer_id);
-                    swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer_id);
-                }
             }
             SwarmEvent::Behaviour(SecureChatBehaviourEvent::Gossipsub(gossipsub::Event::Message {
                 propagation_source,
@@ -300,14 +256,12 @@ impl NetworkManager {
                 let data = bincode::serialize(&message)
                     .context("Failed to serialize message")?;
                 
-                if let Some(target) = peer_id {
+                if let Some(_target) = peer_id {
                     // Direct message (requires established connection)
-                    if let Ok(peer_id) = target.parse::<PeerId>() {
-                        swarm.behaviour_mut().gossipsub.publish(
-                            topic.clone(),
-                            data,
-                        ).ok();
-                    }
+                    swarm.behaviour_mut().gossipsub.publish(
+                        topic.clone(),
+                        data,
+                    ).ok();
                 } else {
                     // Broadcast
                     swarm.behaviour_mut().gossipsub.publish(
@@ -317,7 +271,8 @@ impl NetworkManager {
                 }
             }
             NetworkCommand::ConnectPeer { addr } => {
-                swarm.dial(addr.parse()?)
+                let multiaddr: libp2p::Multiaddr = addr.parse()?;
+                swarm.dial(multiaddr)
                     .context("Failed to dial peer")?;
             }
             NetworkCommand::DisconnectPeer { peer_id } => {
@@ -390,18 +345,17 @@ pub mod utils {
     
     /// Generate QR code data for sharing contact
     pub fn generate_contact_qr(public_key: &[u8; 32], display_name: &str) -> String {
+        use base64::Engine;
         format!("securechat://contact?key={}&name={}",
-            base64::encode(public_key),
-            urlencoding::encode(display_name)
+            base64::engine::general_purpose::STANDARD.encode(public_key),
+            display_name
         )
     }
     
     /// Parse contact from QR code
-    pub fn parse_contact_qr(qr: &str) -> Result<(String, [u8; 32])> {
+    pub fn parse_contact_qr(_qr: &str) -> Result<(String, [u8; 32])> {
         // Implementation would parse the QR data
         // For now, return error
         Err(anyhow::anyhow!("QR parsing not implemented"))
     }
 }
-
-use base64;

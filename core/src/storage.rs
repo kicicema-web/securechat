@@ -9,7 +9,7 @@ use crate::protocol::{Contact, Conversation, LocalMessage, UserProfile, DeviceIn
 /// Encrypted local storage
 pub struct SecureStorage {
     db: Db,
-    master_key: [u8; 32],
+    pub master_key: [u8; 32],
 }
 
 /// Key prefixes for different data types
@@ -135,7 +135,7 @@ impl SecureStorage {
         
         let ciphertext = cipher
             .encrypt(&nonce, data)
-            .context("Encryption failed")?;
+            .map_err(|e| anyhow::anyhow!("Encryption failed: {:?}", e))?;
         
         // Format: [salt:16][nonce:12][ciphertext]
         let mut result = Vec::with_capacity(16 + 12 + ciphertext.len());
@@ -165,7 +165,7 @@ impl SecureStorage {
         
         let plaintext = cipher
             .decrypt(Nonce::from_slice(nonce), ciphertext)
-            .context("Decryption failed")?;
+            .map_err(|e| anyhow::anyhow!("Decryption failed: {:?}", e))?;
         
         Ok(plaintext)
     }

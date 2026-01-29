@@ -18,7 +18,7 @@ jobs:
     - uses: actions/checkout@v4
     
     - name: Install Rust
-      uses: dtolnay/rust-action@stable
+      uses: dtolnay/rust-toolchain@stable
     
     - name: Cache cargo
       uses: actions/cache@v3
@@ -52,15 +52,28 @@ jobs:
         sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libappindicator3-dev librsvg2-dev patchelf
     
     - name: Install Rust
-      uses: dtolnay/rust-action@stable
+      uses: dtolnay/rust-toolchain@stable
     
     - name: Install Node.js
       uses: actions/setup-node@v4
       with:
         node-version: '20'
     
+    - name: Cache Tauri CLI
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/bin/cargo-tauri
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-tauri-cli-${{ hashFiles('**/Cargo.lock') }}
+    
     - name: Install Tauri CLI
-      run: cargo install tauri-cli
+      run: |
+        if ! command -v cargo-tauri &> /dev/null; then
+          cargo install tauri-cli --locked
+        fi
     
     - name: Build desktop app
       working-directory: ./desktop
@@ -68,11 +81,17 @@ jobs:
         npm install
         cargo tauri build
     
-    - name: Upload artifact
+    - name: Upload AppImage
       uses: actions/upload-artifact@v4
       with:
-        name: securechat-linux
+        name: securechat-linux-appimage
         path: desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+
+    - name: Upload DEB
+      uses: actions/upload-artifact@v4
+      with:
+        name: securechat-linux-deb
+        path: desktop/src-tauri/target/release/bundle/deb/*.deb
 
   # Build desktop app for Windows
   build-windows:
@@ -82,15 +101,29 @@ jobs:
     - uses: actions/checkout@v4
     
     - name: Install Rust
-      uses: dtolnay/rust-action@stable
+      uses: dtolnay/rust-toolchain@stable
     
     - name: Install Node.js
       uses: actions/setup-node@v4
       with:
         node-version: '20'
     
+    - name: Cache Tauri CLI
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/bin/cargo-tauri.exe
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-tauri-cli-${{ hashFiles('**/Cargo.lock') }}
+    
     - name: Install Tauri CLI
-      run: cargo install tauri-cli
+      run: |
+        if (!(Get-Command cargo-tauri -ErrorAction SilentlyContinue)) {
+          cargo install tauri-cli --locked
+        }
+      shell: pwsh
     
     - name: Build desktop app
       working-directory: ./desktop
@@ -99,11 +132,66 @@ jobs:
         cargo tauri build
       shell: cmd
     
-    - name: Upload artifact
+    - name: Upload MSI
       uses: actions/upload-artifact@v4
       with:
-        name: securechat-windows
+        name: securechat-windows-msi
         path: desktop/src-tauri/target/release/bundle/msi/*.msi
+
+    - name: Upload NSIS
+      uses: actions/upload-artifact@v4
+      with:
+        name: securechat-windows-nsis
+        path: desktop/src-tauri/target/release/bundle/nsis/*.exe
+
+  # Build desktop app for macOS
+  build-macos:
+    runs-on: macos-latest
+    needs: test-core
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Install Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    
+    - name: Cache Tauri CLI
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/bin/cargo-tauri
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-tauri-cli-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Install Tauri CLI
+      run: |
+        if ! command -v cargo-tauri &> /dev/null; then
+          cargo install tauri-cli --locked
+        fi
+    
+    - name: Build desktop app
+      working-directory: ./desktop
+      run: |
+        npm install
+        cargo tauri build
+    
+    - name: Upload DMG
+      uses: actions/upload-artifact@v4
+      with:
+        name: securechat-macos-dmg
+        path: desktop/src-tauri/target/release/bundle/dmg/*.dmg
+
+    - name: Upload APP
+      uses: actions/upload-artifact@v4
+      with:
+        name: securechat-macos-app
+        path: desktop/src-tauri/target/release/bundle/macos/*.app
 
   # Build Android app
   build-android:
@@ -133,23 +221,155 @@ jobs:
       working-directory: ./android
       run: ./gradlew assembleRelease
     
-    - name: Sign APK (requires signing key)
+    - name: Sign APK (requires signing secrets)
       if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-      working-directory: ./android
+      env:
+        SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+        KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+        KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
       run: |
-        # Sign APK - requires SIGNING_KEY, ALIAS, KEY_STORE_PASSWORD, KEY_PASSWORD secrets
-        echo "Signing APK would happen here with secrets"
+        if [ -n "$SIGNING_KEY" ]; then
+          echo "$SIGNING_KEY" | base64 -d > signing-key.jks
+          jarsigner -keystore signing-key.jks \
+            -storepass "$KEY_STORE_PASSWORD" \
+            -keypass "$KEY_PASSWORD" \
+            android/app/build/outputs/apk/release/app-release-unsigned.apk "$KEY_ALIAS"
+          zipalign -v 4 android/app/build/outputs/apk/release/app-release-unsigned.apk android/app/build/outputs/apk/release/securechat-signed.apk
+        fi
     
-    - name: Upload artifact
+    - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: securechat-android
+        name: securechat-android-apk
         path: android/app/build/outputs/apk/release/*.apk
+
+  # Build iOS library (core only - requires Xcode project for full app)
+  build-ios:
+    runs-on: macos-latest
+    needs: test-core
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust with iOS targets
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+    
+    - name: Install cargo-lipo
+      run: |
+        if ! command -v cargo-lipo &> /dev/null; then
+          cargo install cargo-lipo
+        fi
+    
+    - name: Build iOS libraries
+      working-directory: ./core
+      run: |
+        # Build for device (arm64)
+        cargo build --release --target aarch64-apple-ios
+        
+        # Build for simulator (arm64)
+        cargo build --release --target aarch64-apple-ios-sim
+        
+        # Build for simulator (x86_64 - for Intel Macs)
+        cargo build --release --target x86_64-apple-ios
+    
+    - name: Create XCFramework
+      working-directory: ./core
+      run: |
+        mkdir -p target/ios
+        
+        # Create universal binary for simulators
+        lipo -create \
+          target/aarch64-apple-ios-sim/release/libsecurechat_core.a \
+          target/x86_64-apple-ios/release/libsecurechat_core.a \
+          -output target/ios/libsecurechat_core_sim.a
+        
+        # Create XCFramework
+        xcodebuild -create-xcframework \
+          -library target/aarch64-apple-ios/release/libsecurechat_core.a \
+          -library target/ios/libsecurechat_core_sim.a \
+          -output target/ios/SecureChatCore.xcframework
+    
+    - name: Upload iOS XCFramework
+      uses: actions/upload-artifact@v4
+      with:
+        name: securechat-ios-xcframework
+        path: core/target/ios/SecureChatCore.xcframework
+
+  # Build iOS app (if Xcode project exists)
+  build-ios-app:
+    runs-on: macos-latest
+    needs: build-ios
+    if: false  # Enable this when iOS Xcode project is ready
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: aarch64-apple-ios
+    
+    - name: Install Apple certificates
+      env:
+        BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+        P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+        BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
+        KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      run: |
+        # Create variables
+        CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+        PP_PATH=$RUNNER_TEMP/build_pp.mobileprovision
+        KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+        # Import certificate and provisioning profile from secrets
+        echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
+        echo -n "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode -o $PP_PATH
+
+        # Create temporary keychain
+        security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+        security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+        security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+        # Import certificate to keychain
+        security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+        security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+        security list-keychain -d user -s $KEYCHAIN_PATH
+
+        # Apply provisioning profile
+        mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+        cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles
+
+    - name: Build iOS app
+      working-directory: ./ios
+      run: |
+        xcodebuild -workspace SecureChat.xcworkspace \
+          -scheme SecureChat \
+          -configuration Release \
+          -destination 'generic/platform=iOS' \
+          -archivePath $RUNNER_TEMP/SecureChat.xcarchive \
+          archive
+
+    - name: Export IPA
+      working-directory: ./ios
+      run: |
+        xcodebuild -exportArchive \
+          -archivePath $RUNNER_TEMP/SecureChat.xcarchive \
+          -exportPath $RUNNER_TEMP/SecureChat \
+          -exportOptionsPlist ExportOptions.plist
+        
+        cp $RUNNER_TEMP/SecureChat/*.ipa SecureChat.ipa
+
+    - name: Upload IPA
+      uses: actions/upload-artifact@v4
+      with:
+        name: securechat-ios-ipa
+        path: ios/SecureChat.ipa
 
   # Create GitHub Release
   release:
     runs-on: ubuntu-latest
-    needs: [build-linux, build-windows, build-android]
+    needs: [build-linux, build-windows, build-macos, build-android, build-ios]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     steps:
     - uses: actions/checkout@v4
@@ -157,13 +377,23 @@ jobs:
     - name: Download all artifacts
       uses: actions/download-artifact@v4
     
+    - name: Organize artifacts
+      run: |
+        mkdir -p release
+        cp securechat-linux-appimage/*.AppImage release/ 2>/dev/null || true
+        cp securechat-linux-deb/*.deb release/ 2>/dev/null || true
+        cp securechat-windows-msi/*.msi release/ 2>/dev/null || true
+        cp securechat-windows-nsis/*.exe release/ 2>/dev/null || true
+        cp securechat-macos-dmg/*.dmg release/ 2>/dev/null || true
+        cp securechat-macos-app/*.app release/ 2>/dev/null || true
+        cp securechat-android-apk/*.apk release/ 2>/dev/null || true
+        cp securechat-ios-xcframework/*.xcframework release/ 2>/dev/null || true
+        ls -la release/
+    
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
-        files: |
-          securechat-linux/*.AppImage
-          securechat-windows/*.msi
-          securechat-android/*.apk
+        files: release/*
         generate_release_notes: true
         prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
       env:

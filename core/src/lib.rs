@@ -13,23 +13,24 @@ pub mod storage;
 pub mod network;
 
 use anyhow::{Result, Context};
-use crypto::{IdentityKeyPair, MessageKeyPair, EncryptedIdentityKeys};
+use crypto::{IdentityKeyPair, MessageKeyPair};
 use protocol::{Contact, Conversation, LocalMessage, MessageContent, UserProfile, DeviceInfo, Platform};
 use storage::SecureStorage;
 use network::{NetworkManager, NetworkConfig, NetworkCommand, NetworkEvent};
 use time::OffsetDateTime;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{mpsc, RwLock};
 use futures::channel::mpsc as futures_mpsc;
+use futures::{SinkExt, StreamExt};
 
 /// Application state
 pub struct SecureChat {
-    storage: Arc<Mutex<SecureStorage>>,
+    storage: Arc<RwLock<Option<SecureStorage>>>,
     identity: Arc<RwLock<Option<IdentityKeyPair>>>,
     message_keys: Arc<RwLock<Option<MessageKeyPair>>>,
-    network: Arc<Mutex<Option<NetworkManager>>>,
-    network_cmd_tx: Arc<Mutex<Option<futures_mpsc::Sender<NetworkCommand>>>>,
+    network: Arc<RwLock<Option<NetworkManager>>>,
+    network_cmd_tx: Arc<RwLock<Option<futures_mpsc::Sender<NetworkCommand>>>>,
     profile: Arc<RwLock<Option<UserProfile>>>,
     device_id: String,
 }
@@ -52,11 +53,11 @@ impl SecureChat {
     /// Create new chat instance (without opening database)
     pub fn new(device_id: Option<String>) -> Self {
         Self {
-            storage: Arc::new(Mutex::new(None)),
+            storage: Arc::new(RwLock::new(None)),
             identity: Arc::new(RwLock::new(None)),
             message_keys: Arc::new(RwLock::new(None)),
-            network: Arc::new(Mutex::new(None)),
-            network_cmd_tx: Arc::new(Mutex::new(None)),
+            network: Arc::new(RwLock::new(None)),
+            network_cmd_tx: Arc::new(RwLock::new(None)),
             profile: Arc::new(RwLock::new(None)),
             device_id: device_id.unwrap_or_else(|| protocol::generate_id()),
         }
@@ -73,16 +74,20 @@ impl SecureChat {
         let storage = SecureStorage::create(db_path, password)
             .context("Failed to create database")?;
         
-        *self.storage.lock().await = storage;
+        *self.storage.write().await = Some(storage);
         
         // Generate identity keys
         let mut rng = rand::thread_rng();
         let identity = IdentityKeyPair::generate(&mut rng);
-        let master_key = self.storage.lock().await.master_key;
+        let master_key = self.storage.read().await.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Storage not initialized"))?
+            .master_key;
         let encrypted_identity = identity.encrypt(&master_key, &mut rng)
             .context("Failed to encrypt identity")?;
         
-        self.storage.lock().await.store_identity(&encrypted_identity)?;
+        self.storage.write().await.as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Storage not initialized"))?
+            .store_identity(&encrypted_identity)?;
         *self.identity.write().await = Some(identity);
         
         // Generate message keys
@@ -96,7 +101,9 @@ impl SecureChat {
             avatar: None,
             created_at: OffsetDateTime::now_utc(),
         };
-        self.storage.lock().await.store_profile(&profile)?;
+        self.storage.write().await.as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Storage not initialized"))?
+            .store_profile(&profile)?;
         *self.profile.write().await = Some(profile);
         
         // Store device info
@@ -107,7 +114,9 @@ impl SecureChat {
             last_seen: OffsetDateTime::now_utc(),
             identity_key: encrypted_identity,
         };
-        self.storage.lock().await.store_device(&device)?;
+        self.storage.write().await.as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Storage not initialized"))?
+            .store_device(&device)?;
         
         Ok(())
     }
@@ -122,14 +131,18 @@ impl SecureChat {
         let storage = SecureStorage::unlock(db_path, password)
             .context("Failed to unlock database")?;
         
-        *self.storage.lock().await = storage;
+        *self.storage.write().await = Some(storage);
         
         // Decrypt identity
-        let encrypted_identity = self.storage.lock().await.get_identity()
+        let encrypted_identity = self.storage.read().await.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Storage not initialized"))?
+            .get_identity()
             .context("Failed to get identity")?
             .ok_or_else(|| anyhow::anyhow!("No identity found"))?;
         
-        let master_key = self.storage.lock().await.master_key;
+        let master_key = self.storage.read().await.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Storage not initialized"))?
+            .master_key;
         let identity = IdentityKeyPair::decrypt(&encrypted_identity, &master_key)
             .context("Failed to decrypt identity")?;
         
@@ -140,7 +153,9 @@ impl SecureChat {
         *self.message_keys.write().await = Some(message_keys);
         
         // Load profile
-        let profile = self.storage.lock().await.get_profile()
+        let profile = self.storage.read().await.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Storage not initialized"))?
+            .get_profile()
             .context("Failed to get profile")?;
         *self.profile.write().await = profile;
         
@@ -152,13 +167,13 @@ impl SecureChat {
         let (manager, event_rx, cmd_tx) = NetworkManager::new(config)
             .context("Failed to create network manager")?;
         
-        *self.network.lock().await = Some(manager);
-        *self.network_cmd_tx.lock().await = Some(cmd_tx);
+        *self.network.write().await = Some(manager);
+        *self.network_cmd_tx.write().await = Some(cmd_tx);
         
         // Spawn network task
         let network = self.network.clone();
         tokio::spawn(async move {
-            if let Some(manager) = network.lock().await.take() {
+            if let Some(manager) = network.write().await.take() {
                 if let Err(e) = manager.run().await {
                     log::error!("Network error: {}", e);
                 }
@@ -174,7 +189,7 @@ impl SecureChat {
     
     /// Stop networking
     pub async fn stop_network(&self) -> Result<()> {
-        if let Some(tx) = self.network_cmd_tx.lock().await.as_mut() {
+        if let Some(tx) = self.network_cmd_tx.write().await.as_mut() {
             tx.send(NetworkCommand::Shutdown).await.ok();
         }
         Ok(())
@@ -184,7 +199,7 @@ impl SecureChat {
         mut event_rx: futures_mpsc::Receiver<NetworkEvent>,
         chat_tx: mpsc::Sender<ChatEvent>,
     ) {
-        while let Some(event) = event_rx.recv().await {
+        while let Some(event) = event_rx.next().await {
             let chat_event = match event {
                 NetworkEvent::MessageReceived { peer_id, message } => {
                     // Handle protocol message
@@ -220,11 +235,15 @@ impl SecureChat {
     
     /// Send text message
     pub async fn send_text_message(&self, conversation_id: &str, text: &str) -> Result<String> {
-        let conversation = self.storage.lock().await
+        let storage = self.storage.read().await;
+        let storage_ref = storage.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Storage not initialized"))?;
+        
+        let conversation = storage_ref
             .get_conversation(conversation_id)?
             .ok_or_else(|| anyhow::anyhow!("Conversation not found"))?;
         
-        let contact = self.storage.lock().await
+        let _contact = storage_ref
             .get_contact(&conversation.contact_id)?
             .ok_or_else(|| anyhow::anyhow!("Contact not found"))?;
         
@@ -247,7 +266,7 @@ impl SecureChat {
         };
         
         // Store locally
-        self.storage.lock().await.store_message(&local_message)?;
+        storage_ref.store_message(&local_message)?;
         
         // Encrypt for network (placeholder - real implementation would use proper X3DH)
         // self.encrypt_and_send(&contact, &local_message).await?;
@@ -257,23 +276,37 @@ impl SecureChat {
     
     /// Get all conversations
     pub async fn get_conversations(&self) -> Result<Vec<Conversation>> {
-        self.storage.lock().await.get_all_conversations()
+        let storage = self.storage.read().await;
+        let storage_ref = storage.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Storage not initialized"))?;
+        storage_ref.get_all_conversations()
     }
     
     /// Get messages for a conversation
     pub async fn get_messages(&self, conversation_id: &str, limit: usize) -> Result<Vec<LocalMessage>> {
-        self.storage.lock().await.get_messages(conversation_id, limit)
+        let storage = self.storage.read().await;
+        let storage_ref = storage.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Storage not initialized"))?;
+        storage_ref.get_messages(conversation_id, limit)
     }
     
     /// Create or get conversation with contact
     pub async fn get_or_create_conversation(&self, contact_id: &str) -> Result<Conversation> {
-        if let Some(conv) = self.storage.lock().await
-            .get_conversation_by_contact(contact_id)? {
+        let storage = self.storage.read().await;
+        let storage_ref = storage.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Storage not initialized"))?;
+        
+        if let Some(conv) = storage_ref.get_conversation_by_contact(contact_id)? {
             return Ok(conv);
         }
         
+        drop(storage);  // Release read lock
+        
         let conversation = Conversation::new(contact_id.to_string());
-        self.storage.lock().await.store_conversation(&conversation)?;
+        let mut storage = self.storage.write().await;
+        let storage_ref = storage.as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Storage not initialized"))?;
+        storage_ref.store_conversation(&conversation)?;
         
         Ok(conversation)
     }
@@ -286,24 +319,37 @@ impl SecureChat {
             public_key,
         );
         
-        self.storage.lock().await.store_contact(&contact)?;
+        let mut storage = self.storage.write().await;
+        let storage_ref = storage.as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Storage not initialized"))?;
+        storage_ref.store_contact(&contact)?;
         
         Ok(contact)
     }
     
     /// Get all contacts
     pub async fn get_contacts(&self) -> Result<Vec<Contact>> {
-        self.storage.lock().await.get_all_contacts()
+        let storage = self.storage.read().await;
+        let storage_ref = storage.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Storage not initialized"))?;
+        storage_ref.get_all_contacts()
     }
     
     /// Get user profile
     pub async fn get_profile(&self) -> Result<Option<UserProfile>> {
-        self.storage.lock().await.get_profile()
+        let storage = self.storage.read().await;
+        let storage_ref = storage.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Storage not initialized"))?;
+        storage_ref.get_profile()
     }
     
     /// Update profile
     pub async fn update_profile(&self, display_name: Option<&str>, status_message: Option<&str>) -> Result<()> {
-        let mut profile = self.storage.lock().await
+        let storage = self.storage.read().await;
+        let storage_ref = storage.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Storage not initialized"))?;
+        
+        let mut profile = storage_ref
             .get_profile()?
             .unwrap_or_else(|| UserProfile {
                 display_name: "Anonymous".to_string(),
@@ -319,7 +365,12 @@ impl SecureChat {
             profile.status_message = Some(status.to_string());
         }
         
-        self.storage.lock().await.store_profile(&profile)?;
+        drop(storage);
+        
+        let mut storage = self.storage.write().await;
+        let storage_ref = storage.as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Storage not initialized"))?;
+        storage_ref.store_profile(&profile)?;
         *self.profile.write().await = Some(profile);
         
         Ok(())
@@ -335,10 +386,14 @@ impl SecureChat {
     
     /// Export encrypted backup
     pub async fn export_backup(&self, password: &str) -> Result<Vec<u8>> {
+        let storage = self.storage.read().await;
+        let storage_ref = storage.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Storage not initialized"))?;
+        
         // Collect all data
-        let contacts = self.storage.lock().await.get_all_contacts()?;
-        let conversations = self.storage.lock().await.get_all_conversations()?;
-        let profile = self.storage.lock().await.get_profile()?;
+        let contacts = storage_ref.get_all_contacts()?;
+        let conversations = storage_ref.get_all_conversations()?;
+        let profile = storage_ref.get_profile()?;
         
         // Serialize
         let backup_data = serde_json::json!({
@@ -364,7 +419,8 @@ impl SecureChat {
         
         let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&master_key));
         let nonce = Aes256Gcm::generate_nonce(aes_gcm::aead::OsRng);
-        let encrypted = cipher.encrypt(&nonce, json_data.as_ref())?;
+        let encrypted = cipher.encrypt(&nonce, json_data.as_ref())
+            .map_err(|e| anyhow::anyhow!("Encryption failed: {:?}", e))?;
         
         // Format: [master_key_encrypted][nonce][encrypted_data]
         let master_key_bytes = bincode::serialize(&master_key_store)?;

@@ -170,9 +170,10 @@ pub enum ProtocolMessage {
 /// Generate unique ID
 pub fn generate_id() -> String {
     use rand::RngCore;
+    use base64::Engine;
     let mut bytes = [0u8; 16];
     rand::thread_rng().fill_bytes(&mut bytes);
-    base64::encode(bytes)
+    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 impl Contact {
