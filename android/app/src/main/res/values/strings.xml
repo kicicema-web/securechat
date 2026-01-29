@@ -1,0 +1,35 @@
+<resources>
+    <string name="app_name">SecureChat</string>
+    <string name="app_tagline">End-to-end encrypted messaging</string>
+    
+    <!-- Auth -->
+    <string name="create_account">Create Account</string>
+    <string name="unlock">Unlock</string>
+    <string name="password">Password</string>
+    <string name="confirm_password">Confirm Password</string>
+    <string name="display_name">Display Name</string>
+    <string name="sign_in">Sign In</string>
+    <string name="already_have_account">Already have an account?</string>
+    <string name="need_account">Need an account?</string>
+    
+    <!-- Chat -->
+    <string name="new_contact">New Contact</string>
+    <string name="search_conversations">Search conversations…</string>
+    <string name="type_message">Type a message…</string>
+    <string name="encrypted">🔒 Encrypted</string>
+    <string name="online">Online</string>
+    <string name="offline">Offline</string>
+    
+    <!-- Contact -->
+    <string name="add_contact">Add Contact</string>
+    <string name="contact_name">Contact Name</string>
+    <string name="contact_public_key">Contact Public Key</string>
+    <string name="your_public_key">Your Public Key (share this)</string>
+    
+    <!-- Actions -->
+    <string name="send">Send</string>
+    <string name="cancel">Cancel</string>
+    <string name="save">Save</string>
+    <string name="delete">Delete</string>
+    <string name="block">Block</string>
+</resources>

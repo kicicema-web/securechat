@@ -1,0 +1,68 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+*.pdb
+
+# Node.js
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Android
+*.iml
+.gradle/
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Desktop
+desktop/src/dist/
+desktop/src-tauri/target/
+desktop/src-tauri/WixTools/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Database
+*.db
+*.db-journal
+
+# Secrets
+.env
+*.key
+*.keystore
+!debug.keystore
+
+# Backup files
+*.bak
+*.tmp
+*.temp

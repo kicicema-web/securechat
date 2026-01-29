@@ -1,0 +1,88 @@
+{
+  "build": {
+    "beforeDevCommand": "cd src && npm run dev",
+    "beforeBuildCommand": "cd src && npm run build",
+    "devPath": "http://localhost:1420",
+    "distDir": "../dist",
+    "withGlobalTauri": false
+  },
+  "package": {
+    "productName": "SecureChat",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": false,
+      "shell": {
+        "all": false,
+        "open": true
+      },
+      "dialog": {
+        "all": false,
+        "open": true,
+        "save": true
+      },
+      "fs": {
+        "all": false,
+        "readFile": true,
+        "writeFile": true,
+        "createDir": true,
+        "scope": ["$APPDATA/**", "$DOWNLOAD/**"]
+      },
+      "notification": {
+        "all": true
+      }
+    },
+    "bundle": {
+      "active": true,
+      "category": "SocialNetworkingApp",
+      "copyright": "© 2024 SecureChat Team",
+      "deb": {
+        "depends": []
+      },
+      "externalBin": [],
+      "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/128x128@2x.png",
+        "icons/icon.icns",
+        "icons/icon.ico"
+      ],
+      "identifier": "com.securechat.desktop",
+      "longDescription": "Secure, end-to-end encrypted messaging",
+      "macOS": {
+        "entitlements": null,
+        "exceptionDomain": "",
+        "frameworks": [],
+        "providerShortName": null,
+        "signingIdentity": null
+      },
+      "resources": [],
+      "shortDescription": "Secure messaging app",
+      "targets": "all",
+      "windows": {
+        "certificateThumbprint": null,
+        "digestAlgorithm": "sha256",
+        "timestampUrl": ""
+      }
+    },
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'"
+    },
+    "updater": {
+      "active": false
+    },
+    "windows": [
+      {
+        "fullscreen": false,
+        "height": 800,
+        "resizable": true,
+        "title": "SecureChat",
+        "width": 1200,
+        "minWidth": 900,
+        "minHeight": 600,
+        "center": true
+      }
+    ]
+  }
+}
