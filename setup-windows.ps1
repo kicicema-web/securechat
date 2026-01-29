@@ -59,8 +59,8 @@ function Install-Dependencies {
         
         Write-Host "Choose an option:`n" -ForegroundColor Yellow
         Write-Host "1. Install Visual Studio Build Tools (Recommended - better compatibility)"
-        Write-Host "2. Install MinGW-w64 (Smaller, no admin required after install)"
-        Write-Host "3. Skip - I'll install manually`n"
+        Write-Host "2. Install MinGW-w64 (Smaller - no admin required after install)"
+        Write-Host "3. Skip - I will install manually`n"
         
         $choice = Read-Host "Enter choice (1-3)"
         
@@ -177,7 +177,7 @@ function Build-Project {
         Write-Host $buildOutput
         
         Write-Host "`nTroubleshooting:" -ForegroundColor Yellow
-        Write-Host "1. If you see 'linker link.exe not found', install Visual Studio Build Tools:"
+        Write-Host "1. If you see linker link.exe not found, install Visual Studio Build Tools:"
         Write-Host "   https://visualstudio.microsoft.com/visual-cpp-build-tools/"
         Write-Host "2. Or switch to GNU toolchain: rustup default stable-x86_64-pc-windows-gnu"
         return
