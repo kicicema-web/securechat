@@ -41,7 +41,7 @@ jobs:
 
   # Build desktop app for Linux
   build-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: test-core
     steps:
     - uses: actions/checkout@v4
@@ -75,11 +75,13 @@ jobs:
           cargo install tauri-cli --locked
         fi
     
+    - name: Install npm dependencies
+      working-directory: ./desktop/src
+      run: npm install
+    
     - name: Build desktop app
       working-directory: ./desktop
-      run: |
-        npm install
-        cargo tauri build
+      run: cargo tauri build
     
     - name: Upload AppImage
       uses: actions/upload-artifact@v4
@@ -125,11 +127,14 @@ jobs:
         }
       shell: pwsh
     
+    - name: Install npm dependencies
+      working-directory: ./desktop/src
+      run: npm install
+      shell: cmd
+    
     - name: Build desktop app
       working-directory: ./desktop
-      run: |
-        npm install
-        cargo tauri build
+      run: cargo tauri build
       shell: cmd
     
     - name: Upload MSI
@@ -175,11 +180,13 @@ jobs:
           cargo install tauri-cli --locked
         fi
     
+    - name: Install npm dependencies
+      working-directory: ./desktop/src
+      run: npm install
+    
     - name: Build desktop app
       working-directory: ./desktop
-      run: |
-        npm install
-        cargo tauri build
+      run: cargo tauri build
     
     - name: Upload DMG
       uses: actions/upload-artifact@v4
@@ -216,6 +223,10 @@ jobs:
           ~/.gradle/caches
           ~/.gradle/wrapper
         key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+    
+    - name: Make gradlew executable
+      working-directory: ./android
+      run: chmod +x gradlew
     
     - name: Build Android app
       working-directory: ./android
