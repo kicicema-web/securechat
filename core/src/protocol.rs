@@ -191,7 +191,8 @@ impl Contact {
     
     pub fn fingerprint(&self) -> String {
         let hash = blake3::hash(&self.public_key);
-        format!("{}", hash.to_hex())[..32].to_string()
+        let hex = hash.to_hex();
+        hex[..32.min(hex.len())].to_string()
     }
 }
 

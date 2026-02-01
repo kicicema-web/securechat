@@ -256,9 +256,6 @@ impl SecureStorage {
         let mut messages = Vec::new();
         
         for item in self.db.scan_prefix(prefix.as_bytes()) {
-            if messages.len() >= limit {
-                break;
-            }
             let (_, value) = item.context("Failed to read message")?;
             let decrypted = self.decrypt(&value)?;
             let message: LocalMessage = bincode::deserialize(&decrypted)
@@ -268,6 +265,12 @@ impl SecureStorage {
         
         // Sort by timestamp ascending
         messages.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        
+        // Apply limit after sorting
+        if messages.len() > limit {
+            messages = messages.into_iter().skip(messages.len() - limit).collect();
+        }
+        
         Ok(messages)
     }
     
@@ -313,9 +316,10 @@ impl SecureStorage {
     // ===== Settings Operations =====
     
     pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        let encrypted = self.encrypt(value.as_bytes())?;
         self.db.insert(
             format!("{}{}", PREFIX_SETTINGS, key).as_bytes(),
-            value.as_bytes()
+            encrypted
         ).context("Failed to store setting")?;
         Ok(())
     }
@@ -323,7 +327,8 @@ impl SecureStorage {
     pub fn get_setting(&self, key: &str) -> Result<Option<String>> {
         match self.db.get(format!("{}{}", PREFIX_SETTINGS, key).as_bytes()) {
             Ok(Some(data)) => {
-                let value = String::from_utf8(data.to_vec())
+                let decrypted = self.decrypt(&data)?;
+                let value = String::from_utf8(decrypted)
                     .context("Invalid UTF-8 in setting")?;
                 Ok(Some(value))
             }

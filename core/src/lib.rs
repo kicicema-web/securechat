@@ -266,6 +266,10 @@ impl SecureChat {
         };
         
         // Store locally
+        drop(storage);
+        let mut storage = self.storage.write().await;
+        let storage_ref = storage.as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Storage not initialized"))?;
         storage_ref.store_message(&local_message)?;
         
         // Encrypt for network (placeholder - real implementation would use proper X3DH)
@@ -434,9 +438,10 @@ impl SecureChat {
     }
     
     /// Close and cleanup
-    pub async fn close(self) -> Result<()> {
+    pub async fn close(mut self) -> Result<()> {
         self.stop_network().await.ok();
-        // Storage will be dropped
+        // Explicitly drop storage to release file locks
+        let _ = self.storage.write().await.take();
         Ok(())
     }
 }

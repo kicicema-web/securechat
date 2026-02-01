@@ -120,13 +120,12 @@ impl NetworkManager {
     
     /// Start the network event loop
     pub async fn run(mut self) -> Result<()> {
-        // Generate keypair for swarm
+        // Generate keypair for swarm (use same peer_id as was created in constructor)
         let local_key = Keypair::generate_ed25519();
-        let local_peer_id = PeerId::from(local_key.public());
         
-        // Build swarm using new libp2p 0.54+ API
+        // Build swarm using new libp2p 0.54+ API with tokio runtime
         let mut swarm = SwarmBuilder::with_existing_identity(local_key)
-            .with_async_std()
+            .with_tokio()
             .with_tcp(
                 libp2p::tcp::Config::default(),
                 noise::Config::new,

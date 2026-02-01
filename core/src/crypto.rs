@@ -88,9 +88,11 @@ impl MasterKey {
             .map_err(|e| anyhow::anyhow!("Failed to hash password: {:?}", e))?;
         
         let mut derived_key = [0u8; 32];
-        let _ = password_hash.hash
-            .as_ref()
-            .map(|hash| derived_key.copy_from_slice(&hash.as_bytes()[..32]));
+        if let Some(hash) = password_hash.hash.as_ref() {
+            let hash_bytes = hash.as_bytes();
+            let len = hash_bytes.len().min(32);
+            derived_key[..len].copy_from_slice(&hash_bytes[..len]);
+        }
         
         // Generate random master key and encrypt it
         let master_key: [u8; 32] = Self::generate_random_bytes(rng);
