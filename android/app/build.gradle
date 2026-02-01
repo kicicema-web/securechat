@@ -19,7 +19,7 @@ android {
 
     buildTypes {
         release {
-            minifyEnabled true
+            minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
         debug {
@@ -37,7 +37,6 @@ android {
     }
     
     buildFeatures {
-        viewBinding true
         compose true
     }
     
@@ -72,11 +71,6 @@ dependencies {
     // DataStore
     implementation 'androidx.datastore:datastore-preferences:1.0.0'
     
-    // Room for local database
-    implementation 'androidx.room:room-runtime:2.6.1'
-    implementation 'androidx.room:room-ktx:2.6.1'
-    kapt 'androidx.room:room-compiler:2.6.1'
-    
     // QR Code
     implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
     
@@ -95,5 +89,3 @@ dependencies {
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
     debugImplementation 'androidx.compose.ui:ui-tooling:1.6.1'
 }
-
-apply plugin: 'kotlin-kapt'
