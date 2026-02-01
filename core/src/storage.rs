@@ -266,9 +266,10 @@ impl SecureStorage {
         // Sort by timestamp ascending
         messages.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
         
-        // Apply limit after sorting
+        // Apply limit after sorting - get the last 'limit' messages (most recent)
         if messages.len() > limit {
-            messages = messages.into_iter().skip(messages.len() - limit).collect();
+            let start = messages.len() - limit;
+            messages = messages.into_iter().skip(start).collect();
         }
         
         Ok(messages)

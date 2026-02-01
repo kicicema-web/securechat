@@ -515,7 +515,7 @@ mod tests {
         let contact = chat.add_contact(public_key, "Alice").await.unwrap();
         
         // Get conversation
-        let conversation = chat.get_or_create_conversation(&contact.id).await.unwrap();
+        let _conversation = chat.get_or_create_conversation(&contact.id).await.unwrap();
         
         // Verify
         let conversations = chat.get_conversations().await.unwrap();

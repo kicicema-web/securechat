@@ -202,9 +202,9 @@ impl NetworkManager {
     
     async fn handle_swarm_event(
         &mut self,
-        swarm: &mut libp2p::Swarm<SecureChatBehaviour>,
+        _swarm: &mut libp2p::Swarm<SecureChatBehaviour>,
         event: SwarmEvent<SecureChatBehaviourEvent>,
-        topic: &IdentTopic,
+        _topic: &IdentTopic,
     ) -> Result<()> {
         match event {
             SwarmEvent::NewListenAddr { address, .. } => {
