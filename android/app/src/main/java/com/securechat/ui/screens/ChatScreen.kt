@@ -242,6 +242,7 @@ fun ConversationDrawer(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConversationItem(
     conversation: com.securechat.protocol.Conversation,
