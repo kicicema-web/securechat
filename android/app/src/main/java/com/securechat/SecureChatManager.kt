@@ -46,6 +46,11 @@ object SecureChatManager {
             // Generate identity keys
             val identityKeyPair = cryptoManager.generateIdentityKeyPair()
             
+            // Validate keys were generated
+            if (identityKeyPair.publicKey.isEmpty() || identityKeyPair.secretKey.isEmpty()) {
+                throw IllegalStateException("Failed to generate identity keys")
+            }
+            
             // Store encrypted keys
             securePrefs.edit()
                 .putString("identity_public_key", bytesToBase64(identityKeyPair.publicKey))
