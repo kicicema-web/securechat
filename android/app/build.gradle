@@ -1,6 +1,7 @@
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
+    id 'org.jetbrains.kotlin.plugin.serialization' version '1.9.22'
 }
 
 android {
@@ -79,6 +80,9 @@ dependencies {
     
     // JSON
     implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2'
+    
+    // DateTime
+    implementation 'org.jetbrains.kotlinx:kotlinx-datetime:0.5.0'
     
     // Image loading
     implementation 'io.coil-kt:coil-compose:2.5.0'

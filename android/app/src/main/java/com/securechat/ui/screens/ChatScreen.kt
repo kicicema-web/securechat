@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
@@ -24,6 +25,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.securechat.viewmodel.ChatViewModel
 import kotlinx.coroutines.launch
+import kotlinx.datetime.Instant
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -463,7 +465,7 @@ fun NewContactDialog(
     )
 }
 
-private fun formatTime(timestamp: kotlinx.datetime.Instant): String {
+private fun formatTime(timestamp: Instant): String {
     // TODO: Implement proper time formatting
     return timestamp.toString().takeLast(5)
 }
