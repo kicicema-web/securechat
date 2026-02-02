@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark theme colors matching the app -->
+    <color name="status_bar_color">#FF0D1117</color>
+    <color name="navigation_bar_color">#FF0D1117</color>
+    <color name="window_background">#FF0D1117</color>
+    <color name="primary">#FF58A6FF</color>
+    <color name="primary_dark">#FF1F6FEB</color>
+    <color name="accent">#FF238636</color>
+    <color name="error">#FFF85149</color>
+    <color name="background">#FF0D1117</color>
+    <color name="surface">#FF161B22</color>
+    <color name="text_primary">#FFF0F6FC</color>
+    <color name="text_secondary">#FF8B949E</color>
+</resources>
