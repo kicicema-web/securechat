@@ -1,5 +1,10 @@
 package com.securechat.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -12,15 +17,21 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.securechat.viewmodel.ChatViewModel
@@ -70,7 +81,7 @@ fun ChatScreen(
                                     style = MaterialTheme.typography.titleMedium
                                 )
                                 Text(
-                                    text = "🔒 Encrypted",
+                                    text = "Encrypted",
                                     style = MaterialTheme.typography.bodySmall.copy(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -93,7 +104,7 @@ fun ChatScreen(
                         title = { Text("SecureChat") },
                         navigationIcon = {
                             IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                                Text("☰")
+                                Text("=")
                             }
                         }
                     )
@@ -112,6 +123,19 @@ fun ChatScreen(
                         }
                     )
                 }
+            },
+            floatingActionButton = {
+                // FAB to add new contact - bottom right
+                FloatingActionButton(
+                    onClick = { showNewContactDialog = true },
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                ) {
+                    Icon(
+                        Icons.Default.Add,
+                        contentDescription = "Add Contact"
+                    )
+                }
             }
         ) { padding ->
             if (currentConversation == null) {
@@ -125,15 +149,24 @@ fun ChatScreen(
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Text(
-                            text = "💬",
-                            style = MaterialTheme.typography.displayLarge
+                        Icon(
+                            Icons.Default.PersonAdd,
+                            contentDescription = null,
+                            modifier = Modifier.size(64.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = "Select a conversation",
-                            style = MaterialTheme.typography.bodyLarge,
+                            text = "No conversations yet",
+                            style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Tap + to add a contact and start chatting",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                            textAlign = TextAlign.Center
                         )
                     }
                 }
@@ -198,7 +231,7 @@ fun ConversationDrawer(
                             style = MaterialTheme.typography.titleMedium
                         )
                         Text(
-                            text = "🔒 Encrypted",
+                            text = "Encrypted",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -227,7 +260,7 @@ fun ConversationDrawer(
                 Text("New Contact")
             }
 
-            Divider()
+            HorizontalDivider()
 
             // Conversations list
             LazyColumn {
@@ -242,7 +275,6 @@ fun ConversationDrawer(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConversationItem(
     conversation: com.securechat.protocol.Conversation,
@@ -414,24 +446,104 @@ fun NewContactDialog(
 ) {
     var name by remember { mutableStateOf("") }
     var publicKey by remember { mutableStateOf("") }
+    val context = LocalContext.current
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add New Contact") },
         text = {
             Column {
-                Text(
-                    "Your Public Key (share this):",
-                    style = MaterialTheme.typography.labelMedium
-                )
-                SelectionContainer {
-                    Text(
-                        myPublicKey.take(40) + "...",
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    )
+                // Your public key section with share/copy buttons
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            "Your Public Key",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        SelectionContainer {
+                            Text(
+                                myPublicKey,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(
+                                        MaterialTheme.colorScheme.surface,
+                                        RoundedCornerShape(4.dp)
+                                    )
+                                    .padding(8.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Share and Copy buttons
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            // Copy button
+                            OutlinedButton(
+                                onClick = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    val clip = ClipData.newPlainText("Public Key", myPublicKey)
+                                    clipboard.setPrimaryClip(clip)
+                                    Toast.makeText(context, "Key copied to clipboard", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    Icons.Default.ContentCopy,
+                                    contentDescription = "Copy",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Copy")
+                            }
+
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            // Share button
+                            Button(
+                                onClick = {
+                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(Intent.EXTRA_SUBJECT, "My SecureChat Public Key")
+                                        putExtra(Intent.EXTRA_TEXT, "Add me on SecureChat!\n\nMy public key:\n$myPublicKey")
+                                    }
+                                    context.startActivity(Intent.createChooser(shareIntent, "Share your key via"))
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    Icons.Default.Share,
+                                    contentDescription = "Share",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Share")
+                            }
+                        }
+                    }
                 }
-                Divider(modifier = Modifier.padding(vertical = 16.dp))
+
+                Spacer(modifier = Modifier.height(16.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Add contact section
+                Text(
+                    "Add Contact",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -443,19 +555,25 @@ fun NewContactDialog(
                 OutlinedTextField(
                     value = publicKey,
                     onValueChange = { publicKey = it },
-                    label = { Text("Contact Public Key") },
-                    minLines = 3,
+                    label = { Text("Paste their Public Key") },
+                    minLines = 2,
                     maxLines = 3,
                     modifier = Modifier.fillMaxWidth()
                 )
             }
         },
         confirmButton = {
-            TextButton(
+            Button(
                 onClick = { onAdd(name, publicKey) },
                 enabled = name.isNotBlank() && publicKey.isNotBlank()
             ) {
-                Text("Add")
+                Icon(
+                    Icons.Default.PersonAdd,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Add Contact")
             }
         },
         dismissButton = {

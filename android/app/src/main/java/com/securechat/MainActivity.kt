@@ -1,9 +1,9 @@
 package com.securechat
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.fragment.app.FragmentActivity
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -17,7 +17,7 @@ import com.securechat.ui.theme.SecureChatTheme
 import com.securechat.viewmodel.AuthViewModel
 import com.securechat.viewmodel.ChatViewModel
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     private val authViewModel: AuthViewModel by viewModels()
     private val chatViewModel: ChatViewModel by viewModels()
 
