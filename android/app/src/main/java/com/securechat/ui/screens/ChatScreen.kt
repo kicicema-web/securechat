@@ -260,7 +260,7 @@ fun ConversationDrawer(
                 Text("New Contact")
             }
 
-            HorizontalDivider()
+            Divider()
 
             // Conversations list
             LazyColumn {
@@ -275,6 +275,7 @@ fun ConversationDrawer(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConversationItem(
     conversation: com.securechat.protocol.Conversation,
@@ -533,7 +534,7 @@ fun NewContactDialog(
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
-                HorizontalDivider()
+                Divider()
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Add contact section
