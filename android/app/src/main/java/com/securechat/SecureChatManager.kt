@@ -9,6 +9,7 @@ import com.securechat.protocol.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.security.MessageDigest
 
 object SecureChatManager {
     private lateinit var context: Context
@@ -20,11 +21,11 @@ object SecureChatManager {
     fun initialize(appContext: Context) {
         if (isInitialized) return
         context = appContext.applicationContext
-        
+
         val masterKey = MasterKey.Builder(context)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .build()
-        
+
         securePrefs = EncryptedSharedPreferences.create(
             context,
             "secure_chat_prefs",
@@ -32,33 +33,61 @@ object SecureChatManager {
             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
         )
-        
+
         cryptoManager = CryptoManager()
         isInitialized = true
     }
+
+    fun getContext(): Context = context
 
     fun hasAccount(): Boolean {
         return securePrefs.getBoolean("account_created", false)
     }
 
-    suspend fun createAccount(displayName: String, password: String): Boolean = withContext(Dispatchers.IO) {
+    fun isBiometricEnabled(): Boolean {
+        return securePrefs.getBoolean("biometric_enabled", false)
+    }
+
+    fun setBiometricEnabled(enabled: Boolean) {
+        securePrefs.edit().putBoolean("biometric_enabled", enabled).apply()
+    }
+
+    fun getStoredUsername(): String? {
+        return securePrefs.getString("username", null)
+    }
+
+    private fun hashPassword(password: String, salt: String): String {
+        val combined = "$salt$password"
+        val digest = MessageDigest.getInstance("SHA-256")
+        val hashBytes = digest.digest(combined.toByteArray())
+        return bytesToBase64(hashBytes)
+    }
+
+    suspend fun createAccount(username: String, displayName: String, password: String): Boolean = withContext(Dispatchers.IO) {
         try {
             // Generate identity keys
             val identityKeyPair = cryptoManager.generateIdentityKeyPair()
-            
+
             // Validate keys were generated
             if (identityKeyPair.publicKey.isEmpty() || identityKeyPair.secretKey.isEmpty()) {
                 throw IllegalStateException("Failed to generate identity keys")
             }
-            
-            // Store encrypted keys
+
+            // Generate salt and hash password
+            val salt = java.util.UUID.randomUUID().toString()
+            val passwordHash = hashPassword(password, salt)
+
+            // Store encrypted keys and credentials
             securePrefs.edit()
                 .putString("identity_public_key", bytesToBase64(identityKeyPair.publicKey))
                 .putString("identity_secret_key", bytesToBase64(identityKeyPair.secretKey))
+                .putString("username", username)
                 .putString("display_name", displayName)
+                .putString("password_salt", salt)
+                .putString("password_hash", passwordHash)
                 .putBoolean("account_created", true)
                 .apply()
-            
+
             isAuthenticated = true
             true
         } catch (e: Exception) {
@@ -67,12 +96,34 @@ object SecureChatManager {
         }
     }
 
-    suspend fun unlockAccount(password: String): Boolean = withContext(Dispatchers.IO) {
+    suspend fun unlockAccount(username: String, password: String): Boolean = withContext(Dispatchers.IO) {
         try {
-            // In a real implementation, we'd use the password to decrypt stored keys
-            // For now, just check if account exists
             if (!hasAccount()) return@withContext false
-            
+
+            // Verify username
+            val storedUsername = securePrefs.getString("username", null)
+            if (storedUsername != username) return@withContext false
+
+            // Verify password
+            val salt = securePrefs.getString("password_salt", null) ?: return@withContext false
+            val storedHash = securePrefs.getString("password_hash", null) ?: return@withContext false
+            val inputHash = hashPassword(password, salt)
+
+            if (storedHash != inputHash) return@withContext false
+
+            isAuthenticated = true
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    suspend fun unlockWithBiometric(): Boolean = withContext(Dispatchers.IO) {
+        try {
+            if (!hasAccount()) return@withContext false
+            if (!isBiometricEnabled()) return@withContext false
+
             isAuthenticated = true
             true
         } catch (e: Exception) {
